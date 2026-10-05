@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname -- "$0")"
 
-PANEL="http://87.106.150.195:8118"
+PANEL="https://omsi-admin.nextstoplabs.org"
 
 if [ ! -f driver.txt ]; then
   printf 'First run: type your exact in-game driver name once. It is saved.\nDriver name: '

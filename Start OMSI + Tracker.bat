@@ -4,7 +4,7 @@ REM folder, next to openomsi.exe, with live_tracker_bridge.exe beside it.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-set PANEL=http://87.106.150.195:8118
+set PANEL=https://omsi-admin.nextstoplabs.org
 
 REM Ask for the driver name once, remember it in driver.txt next to this file.
 if not exist driver.txt (

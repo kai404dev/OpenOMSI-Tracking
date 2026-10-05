@@ -30,11 +30,11 @@ and the plugin will tell you so on screen instead of working.
 
 1. Make a `plugins` folder next to your `openomsi.exe` if there is none.
 2. Download `live_tracker.lua` from
-   `http://YOUR-PANEL:8118/tracker/live_tracker.lua` into that folder.
+   `https://omsi-admin.nextstoplabs.org/tracker/live_tracker.lua` into that folder.
    The file name must end in exactly `.lua` (Windows sometimes sneaks on
    an extra `.txt`, which breaks it).
 3. Download `live_tracker_bridge.exe` from
-   `http://YOUR-PANEL:8118/tracker/live_tracker_bridge.exe` into the game
+   `https://omsi-admin.nextstoplabs.org/tracker/live_tracker_bridge.exe` into the game
    folder, next to `Start OMSI + Tracker.bat`.
 4. Double-click `Start OMSI + Tracker.bat`. Type your exact in-game driver
    name once when asked. It starts the tracker and opens the game.
@@ -44,7 +44,7 @@ and the plugin will tell you so on screen instead of working.
 
 1. Same plugin step as above (`plugins/live_tracker.lua`).
 2. Download `live_tracker_bridge-linux` from
-   `http://YOUR-PANEL:8118/tracker/live_tracker_bridge-linux`, run
+   `https://omsi-admin.nextstoplabs.org/tracker/live_tracker_bridge-linux`, run
    `chmod +x` on it once.
 3. Run `./start-omsi-tracker.sh` from the game folder. It asks for your
    driver name once, starts the tracker, opens the game.
