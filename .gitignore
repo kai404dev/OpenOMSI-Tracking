@@ -1,0 +1,5 @@
+# built bridges (download from panel /tracker/ or GitHub Releases)
+bridge-go/live_tracker_bridge.exe
+bridge-go/live_tracker_bridge-linux
+__pycache__/
+*.pyc
