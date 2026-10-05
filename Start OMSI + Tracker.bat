@@ -1,19 +1,12 @@
 @echo off
 REM Start OMSI + Tracker. Double-click this. Put it in your openOMSI game
 REM folder, next to openomsi.exe, with live_tracker_bridge.exe beside it.
-setlocal EnableDelayedExpansion
+REM The bridge finds your driver name by itself. To pin one name instead,
+REM make a shortcut that adds: -driver "Your Name"
+setlocal
 cd /d "%~dp0"
 
 set PANEL=https://omsi-admin.nextstoplabs.org
-
-REM Ask for the driver name once, remember it in driver.txt next to this file.
-if not exist driver.txt (
-  echo First run: type your exact in-game driver name once. It is saved.
-  set /p DRIVER=Driver name:
-  >driver.txt echo !DRIVER!
-)
-set /p DRIVER=<driver.txt
-echo Driver: "%DRIVER%"
 
 if not exist live_tracker_bridge.exe (
   echo.
@@ -32,7 +25,7 @@ if not exist plugins\live_tracker.lua (
 )
 
 REM Bridge in its own window. Keep that window open while you drive.
-start "OMSI Live Tracker" live_tracker_bridge.exe -panel %PANEL% -driver "%DRIVER%"
+start "OMSI Live Tracker" live_tracker_bridge.exe -panel %PANEL%
 
 REM Now the game itself, whichever exe this install has.
 if exist openomsi-launcher.exe (

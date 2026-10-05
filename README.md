@@ -26,6 +26,12 @@ game plugin  --UDP to own PC-->  bridge  --HTTPS-->  admin panel
 You need openOMSI **0.1.1668 or newer**. Older builds lack the send function
 and the plugin will tell you so on screen instead of working.
 
+The forwarder finds your driver name by itself: the launcher's active
+profile, else the newest `Drivers/*.odr` personnel file beside the game,
+else the computer account. It re-checks on every post, so switching driver
+profile mid-session just works with no restart and nothing to type.
+`-driver "Name"` pins one name instead if you ever need it.
+
 **Windows (no Python needed):**
 
 1. Make a `plugins` folder next to your `openomsi.exe` if there is none.
@@ -36,9 +42,8 @@ and the plugin will tell you so on screen instead of working.
 3. Download `live_tracker_bridge.exe` from
    `https://omsi-admin.nextstoplabs.org/tracker/live_tracker_bridge.exe` into the game
    folder, next to `Start OMSI + Tracker.bat`.
-4. Double-click `Start OMSI + Tracker.bat`. Type your exact in-game driver
-   name once when asked. It starts the tracker and opens the game.
-   Keep the tracker window open while you drive.
+4. Double-click `Start OMSI + Tracker.bat`. It starts the tracker and opens
+   the game together. Keep the tracker window open while you drive.
 
 **Linux:**
 
@@ -46,12 +51,11 @@ and the plugin will tell you so on screen instead of working.
 2. Download `live_tracker_bridge-linux` from
    `https://omsi-admin.nextstoplabs.org/tracker/live_tracker_bridge-linux`, run
    `chmod +x` on it once.
-3. Run `./start-omsi-tracker.sh` from the game folder. It asks for your
-   driver name once, starts the tracker, opens the game.
+3. Run `./start-omsi-tracker.sh` from the game folder. It starts the
+   tracker and opens the game together.
 
 Drive for 30 seconds. Your panel row gains fleet number, reg plate and
-passengers. If the driver name you typed does not match your in-game name,
-your data lands on a separate row, so spell it exactly right.
+passengers.
 
 ## If it does not work
 

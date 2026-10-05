@@ -1,19 +1,12 @@
 #!/bin/sh
 # Start OMSI + Tracker. Put this in your openOMSI game folder with
 # live_tracker_bridge-linux beside it, then run it (or double-click it).
-# First run asks for your exact in-game driver name once and saves it.
+# The bridge finds your driver name by itself. To pin one name instead,
+# run the bridge by hand with: -driver "Your Name"
 set -eu
 cd "$(dirname -- "$0")"
 
 PANEL="https://omsi-admin.nextstoplabs.org"
-
-if [ ! -f driver.txt ]; then
-  printf 'First run: type your exact in-game driver name once. It is saved.\nDriver name: '
-  read -r DRIVER
-  printf '%s' "$DRIVER" > driver.txt
-fi
-DRIVER="$(cat driver.txt)"
-echo "Driver: \"$DRIVER\""
 
 if [ ! -x ./live_tracker_bridge-linux ]; then
   if [ -f ./live_tracker_bridge-linux ]; then
@@ -31,7 +24,7 @@ if [ ! -f ./plugins/live_tracker.lua ]; then
 fi
 
 # Bridge in the background. Stop it with: pkill -f live_tracker_bridge-linux
-./live_tracker_bridge-linux -panel "$PANEL" -driver "$DRIVER" &
+./live_tracker_bridge-linux -panel "$PANEL" &
 echo "Tracker started (background). Keep this window open while you drive."
 
 # Now the game itself, whichever binary this install has.

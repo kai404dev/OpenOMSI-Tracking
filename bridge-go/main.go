@@ -7,14 +7,16 @@
 //	game (Lua) --UDP 127.0.0.1:47800--> bridge --HTTPS--> panel POST /api/live
 //
 // Bus type/spec/capacity are resolved panel-side; this only stamps the
-// driver name (the Lua API does not expose the multiplayer player name,
-// so it must match the in-game name for map merging) and forwards.
+// driver name, which it finds by itself (the Lua API cannot see the
+// multiplayer player name): the launcher's active profile, else the newest
+// Drivers/*.odr personnel file beside the game, else the computer account.
+// -driver pins one name instead. The name is re-checked on every post, so
+// switching driver profile mid-session just works.
 //
 // Usage (double-click the .exe, or from a terminal):
 //
-//	live_tracker_bridge.exe -panel https://panel.example.com -driver "Your Name"
-//	live_tracker_bridge.exe -panel https://panel.example.com   (asks for the name)
-//	live_tracker_bridge.exe -panel ... -driver ... -token <live_token> -debug
+//	live_tracker_bridge.exe -panel https://panel.example.com
+//	live_tracker_bridge.exe -panel ... -driver "Name" -token <live_token> -debug
 package main
 
 import (
@@ -26,14 +28,152 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
+// The game decides the multiplayer name as: --lan-name (the launcher passes
+// the driver profile's name), else the personnel file's name, else the
+// computer account's (see lan::player_name in openOMSI). Lua cannot see it,
+// so the bridge reads it from disk with the same order, re-checked on every
+// post so profile switches apply without restarting the bridge:
+//  1. -driver flag (an explicit pin, always wins)
+//  2. the launcher's active profile in ~/.openomsi (exact when found)
+//  3. the newest Drivers/*.odr personnel file beside the game
+//     (the game rewrites it every session; bare "Driver" is skipped like
+//     the game skips it)
+//  4. the computer account (USERNAME on Windows, USER elsewhere)
+//  5. ask once on the terminal (last resort)
+func resolveDriver(pinned, gameDir string) (name, source string) {
+	if strings.TrimSpace(pinned) != "" {
+		return strings.TrimSpace(pinned), "flag"
+	}
+	if p := launcherProfile(); p != "" {
+		return p, "launcher"
+	}
+	if o := newestOdr(gameDir); o != "" {
+		return o, "personnel-file"
+	}
+	if u := strings.TrimSpace(os.Getenv("USERNAME")); u != "" {
+		return u, "account"
+	}
+	if u := strings.TrimSpace(os.Getenv("USER")); u != "" {
+		return u, "account"
+	}
+	return "", ""
+}
+
+// launcherProfile reads the active driver profile from the launcher's own
+// files in ~/.openomsi. Only keys that name a profile count, so the server
+// list (servers.json) can never leak in as a driver name.
+func launcherProfile() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".openomsi")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	wantFile := func(n string) bool {
+		l := strings.ToLower(n)
+		return strings.HasSuffix(l, ".json") &&
+			(strings.Contains(l, "config") || strings.Contains(l, "launcher")) &&
+			!strings.Contains(l, "server")
+	}
+	wantKey := func(k string) bool {
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "profile", "driver_profile", "active_profile", "driver",
+			"player", "player_name", "lan_name", "pilot":
+			return true
+		}
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !wantFile(e.Name()) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(raw) > 1<<20 {
+			continue
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			continue
+		}
+		for k, v := range doc {
+			s, ok := v.(string)
+			if ok && wantKey(k) && usableName(s) {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func usableName(s string) bool {
+	t := strings.TrimSpace(s)
+	return t != "" && !strings.EqualFold(t, "Driver")
+}
+
+// newestOdr returns the stem of the most recently written Drivers/*.odr
+// personnel file under dir (case-insensitive folder match).
+func newestOdr(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	drivers := ""
+	kids, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, k := range kids {
+		if k.IsDir() && strings.EqualFold(k.Name(), "Drivers") {
+			drivers = filepath.Join(dir, k.Name())
+			break
+		}
+	}
+	if drivers == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(drivers)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestTime time.Time
+	found := false
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if len(n) < 5 || !strings.EqualFold(n[len(n)-4:], ".odr") {
+			continue
+		}
+		stem := strings.TrimSpace(n[:len(n)-4])
+		if !usableName(stem) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		mt := info.ModTime()
+		if !found || mt.After(bestTime) || (mt.Equal(bestTime) && stem < best) {
+			best, bestTime, found = stem, mt, true
+		}
+	}
+	return best
+}
+
 func main() {
 	panel := flag.String("panel", "", "panel base URL, e.g. https://panel.example.com")
-	driver := flag.String("driver", "", "in-game multiplayer name (asked when empty)")
+	driver := flag.String("driver", "", "pin one in-game name (default: auto-detect it, re-checked every post)")
 	token := flag.String("token", "", "live_token from server.cfg (only if the server set one)")
+	gameDir := flag.String("game-dir", "", "game folder holding Drivers/ (default: this program's folder)")
 	port := flag.Int("port", 47800, "UDP port the Lua plugin sends to")
 	interval := flag.Float64("interval", 2.0, "minimum seconds between POSTs")
 	debug := flag.Bool("debug", false, "verbose diagnostics")
@@ -43,11 +183,48 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error: -panel is required, e.g. -panel https://panel.example.com")
 		os.Exit(2)
 	}
-	name := strings.TrimSpace(*driver)
+	exeDir := ""
+	if ex, err := os.Executable(); err == nil {
+		exeDir = filepath.Dir(ex)
+	}
+	// candidate game folders for the personnel-file lookup
+	gameDirs := []string{}
+	seenDir := map[string]bool{}
+	for _, d := range []string{*gameDir, exeDir} {
+		if d != "" && !seenDir[d] {
+			seenDir[d] = true
+			gameDirs = append(gameDirs, d)
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil && !seenDir[cwd] {
+		gameDirs = append(gameDirs, cwd)
+	}
+	currentName := func() (string, string) {
+		if strings.TrimSpace(*driver) != "" {
+			return strings.TrimSpace(*driver), "flag"
+		}
+		if p := launcherProfile(); p != "" {
+			return p, "launcher"
+		}
+		for _, d := range gameDirs {
+			if o := newestOdr(d); o != "" {
+				return o, "personnel-file"
+			}
+		}
+		if u := strings.TrimSpace(os.Getenv("USERNAME")); u != "" {
+			return u, "account"
+		}
+		if u := strings.TrimSpace(os.Getenv("USER")); u != "" {
+			return u, "account"
+		}
+		return "", ""
+	}
+	name, source := currentName()
 	if name == "" {
-		fmt.Print("Enter your exact in-game driver name: ")
+		fmt.Print("Could not find your driver name. Type your exact in-game driver name: ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		name = strings.TrimSpace(line)
+		source = "typed"
 	}
 	if name == "" {
 		fmt.Fprintln(os.Stderr, "error: driver name is required (it links your reports to your bus on the map)")
@@ -64,7 +241,7 @@ func main() {
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	postURL := strings.TrimRight(*panel, "/") + "/api/live"
-	fmt.Printf("[bridge] driver=%q panel=%s listening on %s\n", name, *panel, addr)
+	fmt.Printf("[bridge] driver=%q (from %s) panel=%s listening on %s\n", name, source, *panel, addr)
 	fmt.Printf("[bridge] token=%s debug=%v\n", map[bool]string{true: "set", false: "NOT SET"}[*token != ""], *debug)
 	fmt.Println("[bridge] drive in openOMSI - reports forward automatically. Close this window to stop.")
 
@@ -80,6 +257,15 @@ func main() {
 		}
 		if !force && time.Since(lastPost) < time.Duration(*interval*float64(time.Second)) {
 			return
+		}
+		// re-check the name on every post: switching driver profile
+		// mid-session just works, no restart asked.
+		nowName, nowSource := currentName()
+		if nowName == "" {
+			nowName = name // keep the last good one rather than nothing
+		} else if nowName != name {
+			fmt.Printf("[bridge] driver is now %q (was %q, from %s)\n", nowName, name, nowSource)
+			name = nowName
 		}
 		payload := make(map[string]any, len(pending)+1)
 		for k, v := range pending {

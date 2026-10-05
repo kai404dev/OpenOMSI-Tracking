@@ -207,6 +207,108 @@ def resolve_bus(index: dict, manufacturer, model):
     return spec
 
 
+# ------------------------------------------------- driver name auto-detect
+# Same order the game itself uses (its lan::player_name): an explicit pin,
+# else the launcher's active profile in ~/.openomsi, else the newest
+# Drivers/*.odr personnel file beside the game (rewritten every session),
+# else the computer account, else ask once. Re-checked on every post so
+# switching driver profile mid-session just works. The Lua API cannot see
+# the multiplayer name, hence this disk lookup.
+_PROFILE_KEYS = {"profile", "driver_profile", "active_profile", "driver",
+                 "player", "player_name", "lan_name", "pilot"}
+
+def _usable_name(s):
+    t = (s or "").strip()
+    return t if (t and t.lower() != "driver") else ""
+
+def _launcher_profile():
+    try:
+        home = Path.home()
+    except Exception:
+        return ""
+    openomsi = home / ".openomsi"
+    try:
+        files = list(openomsi.iterdir())
+    except OSError:
+        return ""
+    for f in files:
+        if f.is_dir() or not f.suffix.lower() == ".json":
+            continue
+        low = f.name.lower()
+        if (("config" not in low and "launcher" not in low)
+                or "server" in low):
+            continue
+        try:
+            if f.stat().st_size > 1 << 20:
+                continue
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(doc, dict):
+            for k, v in doc.items():
+                if (isinstance(v, str) and k.strip().lower() in _PROFILE_KEYS
+                        and _usable_name(v)):
+                    return v.strip()
+    return ""
+
+def _newest_odr(game_dirs):
+    best, best_mtime = "", -1.0
+    for gd in game_dirs:
+        if not gd:
+            continue
+        try:
+            kids = list(Path(gd).iterdir())
+        except OSError:
+            continue
+        drivers = next((k for k in kids
+                        if k.is_dir() and k.name.lower() == "drivers"), None)
+        if drivers is None:
+            continue
+        try:
+            entries = list(drivers.iterdir())
+        except OSError:
+            continue
+        for e in entries:
+            if e.is_dir() or e.suffix.lower() != ".odr":
+                continue
+            stem = _usable_name(e.stem)
+            if not stem:
+                continue
+            try:
+                mt = e.stat().st_mtime
+            except OSError:
+                continue
+            if (mt, stem.lower()) > (best_mtime, best.lower()):
+                best, best_mtime = stem, mt
+    return best
+
+def _account_name():
+    for var in ("USERNAME", "USER"):
+        name = _usable_name(os.environ.get(var, ""))
+        if name:
+            return name
+    try:
+        import getpass
+        return _usable_name(getpass.getuser())
+    except Exception:
+        return ""
+
+def resolve_driver(pinned, game_dirs):
+    """Return (name, source). Empty name means: ask the user."""
+    if _usable_name(pinned):
+        return pinned.strip(), "flag"
+    prof = _launcher_profile()
+    if prof:
+        return prof, "launcher"
+    odr = _newest_odr(game_dirs)
+    if odr:
+        return odr, "personnel-file"
+    acc = _account_name()
+    if acc:
+        return acc, "account"
+    return "", ""
+
+
 # ------------------------------------------------------------------ posting
 def post_live(panel_url: str, token: str, payload: dict, timeout: int = 8):
     data = json.dumps(payload).encode()
@@ -225,7 +327,9 @@ def main():
     ap.add_argument("--panel", default=os.environ.get("LIVE_PANEL", ""),
                     help="panel base URL, e.g. https://panel.example.com")
     ap.add_argument("--driver", default=os.environ.get("LIVE_DRIVER", ""),
-                    help="your in-game multiplayer name (shown on the live map)")
+                    help="pin one in-game name (default: auto-detect it, re-checked every post)")
+    ap.add_argument("--game-dir", default=os.environ.get("GAME_DIR", ""),
+                    help="game folder holding Drivers/ (default: this script's folder)")
     ap.add_argument("--token", default=os.environ.get("LIVE_TOKEN", ""),
                     help="live_token from the server's server.cfg (if set)")
     ap.add_argument("--omsi-root", default=os.environ.get("OMSI_ROOT", ""),
@@ -241,8 +345,22 @@ def main():
     if not args.panel:
         print("error: --panel is required (or env LIVE_PANEL)", file=sys.stderr)
         return 2
-    if not args.driver:
-        print("error: --driver is required (or env LIVE_DRIVER)", file=sys.stderr)
+    here = str(Path(__file__).resolve().parent)
+    game_dirs = []
+    for d in (args.game_dir, here, os.getcwd()):
+        if d and d not in game_dirs:
+            game_dirs.append(d)
+    driver, source = resolve_driver(args.driver, game_dirs)
+    if not driver:
+        try:
+            driver = input("Could not find your driver name. "
+                           "Type your exact in-game driver name: ").strip()
+            source = "typed"
+        except (EOFError, KeyboardInterrupt):
+            driver = ""
+    if not driver:
+        print("error: driver name is required (it links your reports "
+              "to your bus on the map)", file=sys.stderr)
         return 2
 
     index = {}
@@ -258,7 +376,7 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", args.port))
     sock.settimeout(1.0)
-    print(f"[bridge] driver={args.driver!r} panel={args.panel} "
+    print(f"[bridge] driver={driver!r} (from {source}) panel={args.panel} "
           f"listening on 127.0.0.1:{args.port}")
     print(f"[bridge] token={'set (len %d)' % len(args.token) if args.token else 'NOT SET'} "
           f"omsi_root={args.omsi_root or '(none)'} debug={args.debug}")
@@ -289,7 +407,13 @@ def main():
             now = time.time()
             if pending is not None and now - last_post >= args.interval:
                 payload = dict(pending)
-                payload["driver"] = args.driver
+                now_name, now_source = resolve_driver(args.driver, game_dirs)
+                if now_name:
+                    if now_name != driver:
+                        print(f"[bridge] driver is now {now_name!r} "
+                              f"(was {driver!r}, from {now_source})")
+                        driver = now_name
+                payload["driver"] = driver
                 payload.setdefault("vehicle_manufacturer",
                                    payload.get("bus_manufacturer"))
                 spec = resolve_bus(index, payload.get("vehicle_manufacturer"),
